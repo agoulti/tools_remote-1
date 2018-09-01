@@ -31,6 +31,12 @@ public final class RemoteClientOptions {
   @Parameter(names = "--help", description = "This message.", help = true)
   public boolean help;
 
+  @Parameter(
+      names = "--grpc_log",
+      description = "GRPC log to reference for additional information"
+  )
+  public String grpcLog = "";
+
   @Parameters(
     commandDescription = "Recursively lists a Directory in remote cache.",
     separators = "="
@@ -143,7 +149,6 @@ public final class RemoteClientOptions {
   public static class ShowActionCommand {
     @Parameter(
       names = {"--textproto", "-p"},
-      required = true,
       converter = FileConverter.class,
       description = "Path to a Action proto stored in protobuf text format."
     )
@@ -188,14 +193,6 @@ public final class RemoteClientOptions {
     separators = "="
   )
   public static class PrintLogCommand {
-    @Parameter(
-      names = {"--file", "-f"},
-      required = true,
-      converter = FileConverter.class,
-      description = "Path to log file."
-    )
-    public File file = null;
-
     @Parameter(
       names = {"--group_by_action", "-g"},
       description =
