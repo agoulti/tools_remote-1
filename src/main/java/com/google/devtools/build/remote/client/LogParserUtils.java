@@ -21,7 +21,9 @@ import com.google.common.collect.TreeMultiset;
 import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.LogEntry;
 import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.RpcCallDetails.DetailsCase;
 import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.WatchDetails;
+import com.google.devtools.build.remote.client.ActionGrouping.ActionGroupingException;
 import com.google.devtools.build.remote.client.RemoteClientOptions.PrintLogCommand;
+import com.google.devtools.remoteexecution.v1test.Action;
 import com.google.devtools.remoteexecution.v1test.ExecuteResponse;
 import com.google.longrunning.Operation;
 import com.google.longrunning.Operation.ResultCase;
@@ -121,16 +123,21 @@ public class LogParserUtils {
     }
   }
 
-  private void printEntriesGroupedByAction(OutputStream outStream)
-      throws IOException, ParamException {
+  private ActionGrouping groupByAction() throws ParamException, IOException {
     ActionGrouping byAction = new ActionGrouping();
-    ;
+
     try (InputStream in = new FileInputStream(getFilename())) {
       LogEntry entry;
       while ((entry = LogEntry.parseDelimitedFrom(in)) != null) {
         byAction.addLogEntry(entry);
       }
     }
+    return byAction;
+  }
+
+  private void printEntriesGroupedByAction(OutputStream outStream)
+      throws IOException, ParamException {
+    ActionGrouping byAction = groupByAction();
     PrintWriter out =
         new PrintWriter(new BufferedWriter(new OutputStreamWriter(outStream, UTF_8)), true);
     byAction.printByAction(out);
@@ -151,5 +158,9 @@ public class LogParserUtils {
       System.err.println(e.getMessage());
       System.exit(1);
     }
+  }
+
+  public Action getAction(String actionId) throws ActionGroupingException {
+    return null;
   }
 }

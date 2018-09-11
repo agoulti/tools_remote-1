@@ -30,6 +30,7 @@ import com.google.devtools.build.remote.client.RemoteClientOptions.RunCommand;
 import com.google.devtools.build.remote.client.RemoteClientOptions.ShowActionCommand;
 import com.google.devtools.build.remote.client.RemoteClientOptions.ShowActionResultCommand;
 import com.google.devtools.remoteexecution.v1test.Action;
+import com.google.devtools.remoteexecution.v1test.Action.Builder;
 import com.google.devtools.remoteexecution.v1test.ActionResult;
 import com.google.devtools.remoteexecution.v1test.Command;
 import com.google.devtools.remoteexecution.v1test.Command.EnvironmentVariable;
@@ -172,6 +173,7 @@ public class RemoteClient {
       System.out.println(" ... (too many to list, some omitted)");
     }
   }
+
 
   // Output for print action command.
   private void printAction(Action action, int limit) throws IOException {
@@ -376,13 +378,33 @@ public class RemoteClient {
     }
   }
 
-  private static void doShowAction(ShowActionCommand options, RemoteClient client)
-      throws IOException {
-    Action.Builder builder = Action.newBuilder();
-    FileInputStream fin = new FileInputStream(options.file);
-    TextFormat.getParser().merge(new InputStreamReader(fin), builder);
+  private static void doShowAction(ShowActionCommand options, RemoteClient client, String grpcLog)
+      throws IOException, ActionGrouping.ActionGroupingException, ParameterException {
+    if(options.actionId == "" && options.file == null) {
+      System.err.println("Need to specify at least one of --actionId or --file.");
+      System.exit(1);
+    }
+    if(options.actionId != "" && options.file != null) {
+      System.err.println("Too many options. Specify only one of --actionId or --file.");
+      System.exit(1);
+    }
+    if(options.actionId != "" && grpcLog == "") {
+      System.err.println("Option --actionId requires --grpc_log.");
+      System.exit(1);
+    }
 
-    client.printAction(builder.build(), options.limit);
+    Action action;
+    if(options.file != null) {
+      Builder builder = Action.newBuilder();
+      FileInputStream fin = new FileInputStream(options.file);
+      TextFormat.getParser().merge(new InputStreamReader(fin), builder);
+      action = builder.build();
+    } else {
+      LogParserUtils parser = new LogParserUtils(grpcLog);
+      action = parser.getAction(options.actionId);
+    }
+
+    client.printAction(action, options.limit);
   }
 
   private static void doShowActionResult(ShowActionResultCommand options, RemoteClient client)
@@ -483,7 +505,7 @@ public class RemoteClient {
         doCat(catCommand, makeClientWithOptions(remoteOptions, authAndTlsOptions));
         break;
       case "show_action":
-        doShowAction(showActionCommand, makeClientWithOptions(remoteOptions, authAndTlsOptions));
+        doShowAction(showActionCommand, makeClientWithOptions(remoteOptions, authAndTlsOptions), remoteClientOptions.grpcLog);
         break;
       case "show_action_result":
         doShowActionResult(

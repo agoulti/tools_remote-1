@@ -155,6 +155,13 @@ public final class RemoteClientOptions {
     public File file = null;
 
     @Parameter(
+        names = {"--actionid", "-a"},
+        converter = FileConverter.class,
+        description = "Action ID. Needs to be used together with --grpc_log option."
+    )
+    public String actionId = "";
+
+    @Parameter(
       names = {"--limit", "-l"},
       description = "The maximum number of input/output files to list."
     )

@@ -5,6 +5,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import com.google.common.collect.Multiset;
 import com.google.common.collect.TreeMultiset;
 import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.LogEntry;
+import com.google.devtools.remoteexecution.v1test.Action;
 import com.google.protobuf.Timestamp;
 import java.io.BufferedWriter;
 import java.io.FileInputStream;
@@ -51,6 +52,25 @@ final class ActionGrouping {
           TreeMultiset.create((a, b) -> compareTimestamps(a.getStartTime(), b.getStartTime())));
     }
     actionMap.get(hash).add(entry);
+  }
+
+  public class ActionGroupingException extends Exception {
+    ActionGroupingException(String message) {
+      super(message);
+    }
+  }
+
+  public Action getAction(String actionId) throws ActionGroupingException {
+    if(!actionMap.containsKey(actionId)) {
+      throw new ActionGroupingException("actionId " + actionId + " not found in the log");
+    }
+
+    for (LogEntry e : actionMap.get(actionId)) {
+      if(e.hasDetails()) {
+        // (*) TODO
+      }
+    }
+    return null;
   }
 
   public void printByAction(PrintWriter out) throws IOException {
