@@ -1,5 +1,6 @@
 package com.google.devtools.build.remote.client;
 
+import build.bazel.remote.execution.v2.ActionResult;
 import build.bazel.remote.execution.v2.Digest;
 import build.bazel.remote.execution.v2.ExecuteResponse;
 import com.google.common.annotations.VisibleForTesting;
@@ -179,14 +180,31 @@ final class ActionGrouping {
       }
       if(response == null) {
         // No executions: gotten result from ActionCache or cache-only execution
-      } else if (!response.error.isEmpty()) {
+        continue;
+      }
+
+      boolean failed = false;
+
+      if (response.response == null) {
+        failed = true;
+      } else if (!response.response.hasResult()) {
+        failed = true;
+      } else {
+        ActionResult a = response.response.getResult();
+        if(a.getExitCode() != 0) {
+          failed = true;
+        }
+      }
+
+      if(failed) {
         // Last execution resulted in an error. Add this action to failed actions list
-        if(digest == null) {
+        if (digest == null) {
           System.err.println("Error: missing digest for action " + hash);
         } else {
           result.add(digest);
         }
-      } // Else contains a proper execution result
+        continue;
+      }
     }
     if(problematic > 0) {
       System.err.printf("Skipped %d misformed entrie(s).\n", problematic);
