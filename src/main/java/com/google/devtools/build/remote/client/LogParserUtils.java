@@ -63,7 +63,8 @@ public class LogParserUtils {
   }
 
   // Returns an ExecutionResponse contained in the operation and null if none.
-  // If the operation contains an error, populates StringBuilder "error" with the error message.
+  // If the operation contains an error, returns null and populates StringBuilder "error" with
+  // the error message.
   public static <T extends Message> T getExecutionResponse(
       Operation o, Class<T> t, StringBuilder error) throws IOException {
     if (o.getResultCase() == ResultCase.ERROR && o.getError().getCode() != Code.OK.value()) {

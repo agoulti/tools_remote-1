@@ -11,6 +11,7 @@ import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.LogEntry;
 import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.RpcCallDetails;
 import com.google.longrunning.Operation;
 import com.google.longrunning.Operation.ResultCase;
+import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.Timestamps;
 import io.grpc.Status.Code;
 import java.io.IOException;
@@ -31,8 +32,131 @@ final class ActionGrouping {
 
   @VisibleForTesting static final String actionString = "Entries for action with hash '%s'\n";
 
+  // A summary of ActionResult for a single action:
+  // This finds and records and ActionResult, regardless of how it was obtained.
+  private static class ActionResultSummary {
+    String actionId;
+
+    ActionResult actionResult;
+
+    Timestamp latestErrorTimestamp = Timestamps.MIN_VALUE;
+    String latestError;
+
+    public ActionResultSummary(String actionId) {
+      this.actionId = actionId;
+    }
+
+    public ActionResult getActionResult() {
+      return actionResult;
+    }
+
+    private void setResult(ActionResult result) {
+      if (this.actionResult != null) {
+        System.err.println(
+            "Warning: unexpected log format: multiple action results for action " + actionResult);
+      }
+      actionResult = result;
+    }
+
+    private void add(List<Operation> operations) throws IOException {
+      for(Operation o : operations) {
+        StringBuilder error = new StringBuilder();
+        ExecuteResponse response = LogParserUtils.getExecutionResponse(o, ExecuteResponse.class, error);
+        if(response != null && response.hasResult()) {
+          setResult(response.getResult());
+        }
+      }
+    }
+
+    void add(LogEntry entry) throws IOException {
+      if(!entry.hasDetails()) {
+        return;
+      }
+
+      if(entry.getStatus().getCode() != Code.OK.value()) {
+        return;
+      }
+
+      RpcCallDetails details = entry.getDetails();
+
+      if(details.hasExecute()) {
+        add(details.getExecute().getResponsesList());
+      } else if (details.hasWaitExecution()){
+        add(details.getWaitExecution().getResponsesList());
+      } else if (details.hasGetActionResult()) {
+        setResult(details.getGetActionResult().getResponse());
+      }
+    }
+  }
+
+  @VisibleForTesting static class ActionDetails {
+    Multiset<LogEntry> log;
+    Digest digest;
+    ActionResultSummary summary;
+
+    ActionDetails(String actionId) {
+      log = TreeMultiset.create(
+          (a, b) -> {
+            int i = Timestamps.compare(a.getStartTime(), b.getStartTime());
+            if (i != 0) {
+              return i;
+            }
+            // In the improbable case of the same timestamp, ensure the messages do not
+            // override each other.
+            return a.hashCode() - b.hashCode();
+          });
+      summary = new ActionResultSummary(actionId);
+    }
+
+    private Digest extractDigest(LogEntry entry) {
+      if(!entry.hasDetails()) {
+        return null;
+      }
+      RpcCallDetails details = entry.getDetails();
+      if(details.hasExecute()) {
+        if(details.getExecute().hasRequest() && details.getExecute().getRequest().hasActionDigest()) {
+          return details.getExecute().getRequest().getActionDigest();
+        }
+      }
+      if(details.hasGetActionResult()) {
+        if(details.getGetActionResult().hasRequest() && details.getGetActionResult().getRequest().hasActionDigest()) {
+          return details.getGetActionResult().getRequest().getActionDigest();
+        }
+      }
+      return null;
+    }
+
+    Digest getDigest() {
+      return digest;
+    }
+
+    void add(LogEntry entry) throws IOException {
+      log.add(entry);
+
+      Digest d = extractDigest(entry);
+      if(d != null) {
+        if(digest != null && !d.equals(digest)) {
+          System.err.println("Warning: conflicting digests: " + d + " and " + digest);
+        }
+        digest = d;
+      }
+
+      summary.add(entry);
+    }
+
+    // We will consider an action to be failed if we successfully got an action result but the exit
+    // code is non-zero
+    boolean isFailed() {
+      return summary.getActionResult() != null && summary.getActionResult().getExitCode() != 0;
+    }
+
+    Iterable<? extends LogEntry> getSortedElements() {
+      return log;
+    }
+  };
+
   // Key: actionId; Value: a set of associated log entries.
-  private Map<String, Multiset<LogEntry>> actionMap = new HashMap<>();
+  private Map<String, ActionDetails> actionMap = new HashMap<>();
 
   // True if found V1 entries in the log.
   private boolean V1found = false;
@@ -44,25 +168,7 @@ final class ActionGrouping {
     return details.hasV1Execute() || details.hasV1FindMissingBlobs() || details.hasV1GetActionResult() || details.hasV1Watch();
   }
 
-  private Digest getDigest(LogEntry entry) {
-    if(!entry.hasDetails()) {
-      return null;
-    }
-    RpcCallDetails details = entry.getDetails();
-    if(details.hasExecute()) {
-      if(details.getExecute().hasRequest() && details.getExecute().getRequest().hasActionDigest()) {
-        return details.getExecute().getRequest().getActionDigest();
-      }
-    }
-    if(details.hasGetActionResult()) {
-      if(details.getGetActionResult().hasRequest() && details.getGetActionResult().getRequest().hasActionDigest()) {
-        return details.getGetActionResult().getRequest().getActionDigest();
-      }
-    }
-    return null;
-  }
-
-  public void addLogEntry(LogEntry entry) {
+  void addLogEntry(LogEntry entry) throws IOException {
     if(entry.hasDetails() && isV1Entry(entry.getDetails())) {
       V1found = true;
     }
@@ -74,28 +180,17 @@ final class ActionGrouping {
     String hash = entry.getMetadata().getActionId();
 
     if (!actionMap.containsKey(hash)) {
-      actionMap.put(
-          hash,
-          TreeMultiset.create(
-              (a, b) -> {
-                int i = Timestamps.compare(a.getStartTime(), b.getStartTime());
-                if (i != 0) {
-                  return i;
-                }
-                // In the improbable case of the same timestamp, ensure the messages do not
-                // override each other.
-                return a.hashCode() - b.hashCode();
-              }));
+      actionMap.put(hash, new ActionDetails(hash));
     }
     actionMap.get(hash).add(entry);
   }
 
-  public void printByAction(PrintWriter out) throws IOException {
+  void printByAction(PrintWriter out) throws IOException {
     for (String hash : actionMap.keySet()) {
       out.println(actionDelimiter);
       out.printf(actionString, hash);
       out.println(actionDelimiter);
-      for (LogEntry entry : actionMap.get(hash)) {
+      for (LogEntry entry : actionMap.get(hash).getSortedElements()) {
         LogParserUtils.printLogEntry(entry, out);
         out.println(entryDelimiter);
       }
@@ -106,109 +201,27 @@ final class ActionGrouping {
     }
   }
 
-
-  private class ResponseOrError {
-    public String error;
-    public ExecuteResponse response;
-
-    public ResponseOrError(ExecuteResponse response) {
-      this.response = response;
-      this.error = "";
-    }
-
-    public ResponseOrError(String error) {
-      this.response = null;
-      this.error = error;
-    }
-  }
-
-  private ResponseOrError getResponseOrError(List<Operation> operations) throws IOException {
-    for(Operation o : operations) {
-      StringBuilder error = new StringBuilder();
-      ExecuteResponse response = LogParserUtils.getExecutionResponse(o, ExecuteResponse.class, error);
-      if(response != null) {
-        return new ResponseOrError(response);
-      }
-      String errorString = error.toString();
-      if(!errorString.isEmpty()) {
-        return new ResponseOrError(errorString);
-      }
-    }
-    return null;
-  }
-
-  public List<Digest> failedActions() throws IOException {
+  List<Digest> failedActions() throws IOException {
     if(V1found) {
-      System.err.printf(
+      System.err.println(
           "This functinality is not supported for V1 API. Please upgrade your Bazel version.");
       System.exit(1);
     }
 
-    int problematic = 0;
-    ResponseOrError response = null; // Error or response from the last Execution
-    ArrayList<Digest> result = new ArrayList<Digest>();
+    ArrayList<Digest> result = new ArrayList<>();
 
     for (String hash : actionMap.keySet()) {
-      Digest digest = null;
-
-      for (LogEntry entry : actionMap.get(hash)) {
-        if(!entry.hasDetails()) {
-          problematic++;
-          continue;
-        }
-        Digest d = getDigest(entry);
-        if(d != null) {
-          if(digest != null && digest.equals(d)) {
-            System.err.println("Inconsistent digests for action " + hash + " : " + d.getHash() + "/" + d.getSizeBytes() + " != " + digest.getHash() + "/" + digest.getSizeBytes());
-          }
-          digest = d;
-        }
-
-        RpcCallDetails details = entry.getDetails();
-
-        if(details.hasExecute()) {
-          ExecuteDetails execute = details.getExecute();
-
-          if(entry.getStatus().getCode() != Code.OK.value()) {
-            response = new ResponseOrError("\"Execution status code was \" + entry.getStatus().getCode()");
-          } else {
-            response = getResponseOrError(execute.getResponsesList());
-          }
-        } else if(details.hasWaitExecution()) {
-          response = getResponseOrError(details.getWaitExecution().getResponsesList());
-        }
-      }
-      if(response == null) {
-        // No executions: gotten result from ActionCache or cache-only execution
-        continue;
-      }
-
-      boolean failed = false;
-
-      if (response.response == null) {
-        failed = true;
-      } else if (!response.response.hasResult()) {
-        failed = true;
-      } else {
-        ActionResult a = response.response.getResult();
-        if(a.getExitCode() != 0) {
-          failed = true;
-        }
-      }
-
-      if(failed) {
-        // Last execution resulted in an error. Add this action to failed actions list
+      ActionDetails a = actionMap.get(hash);
+      if (a.isFailed()) {
+        Digest digest = a.getDigest();
         if (digest == null) {
-          System.err.println("Error: missing digest for action " + hash);
+          System.err.println("Error: missing digest for failed action " + hash);
         } else {
           result.add(digest);
         }
-        continue;
       }
     }
-    if(problematic > 0) {
-      System.err.printf("Skipped %d misformed entrie(s).\n", problematic);
-    }
+
     return result;
   }
 }
