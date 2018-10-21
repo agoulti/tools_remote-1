@@ -34,7 +34,7 @@ final class ActionGrouping {
 
   // A summary of ActionResult for a single action:
   // This finds and records and ActionResult, regardless of how it was obtained.
-  private static class ActionResultSummary {
+  static class ActionResultSummary {
     String actionId;
 
     ActionResult actionResult;
@@ -42,11 +42,11 @@ final class ActionGrouping {
     Timestamp latestErrorTimestamp = Timestamps.MIN_VALUE;
     String latestError;
 
-    public ActionResultSummary(String actionId) {
+    ActionResultSummary(String actionId) {
       this.actionId = actionId;
     }
 
-    public ActionResult getActionResult() {
+    ActionResult getActionResult() {
       return actionResult;
     }
 

@@ -13,10 +13,21 @@
 // limitations under the License.
 package com.google.devtools.build.remote.client;
 
+import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
+import build.bazel.remote.execution.v2.ActionResult;
+import build.bazel.remote.execution.v2.ExecuteResponse;
 import build.bazel.remote.execution.v2.RequestMetadata;
+import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.ExecuteDetails;
+import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.GetActionResultDetails;
 import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.LogEntry;
+import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.RpcCallDetails;
+import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.WaitExecutionDetails;
+import com.google.devtools.build.remote.client.ActionGrouping.ActionDetails;
+import com.google.devtools.build.remote.client.ActionGrouping.ActionResultSummary;
+import com.google.longrunning.Operation;
+import com.google.protobuf.Any;
 import com.google.protobuf.util.Timestamps;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -102,15 +113,21 @@ public class ActionGroupingTest {
     checkOutput(actionGrouping); // This will ensure there are no delimiters in the output
   }
 
-  private LogEntry getLogEntry(String actionId, String method, int nanos) {
+  private LogEntry getLogEntry(String actionId, String method, int nanos, RpcCallDetails details) {
     RequestMetadata m = RequestMetadata.newBuilder().setActionId(actionId).build();
-    LogEntry result =
+    LogEntry.Builder result =
         LogEntry.newBuilder()
             .setMetadata(m)
             .setMethodName(method)
-            .setStartTime(Timestamps.fromNanos(nanos))
-            .build();
-    return result;
+            .setStartTime(Timestamps.fromNanos(nanos));
+    if(details != null) {
+      result.setDetails(details);
+    }
+    return result.build();
+  }
+
+  private LogEntry getLogEntry(String actionId, String method, int nanos) {
+    return getLogEntry(actionId, method, nanos, null);
   }
 
   private String actionHeader(String actionId) {
@@ -186,4 +203,91 @@ public class ActionGroupingTest {
         "a3_call_1",
         ActionGrouping.entryDelimiter);
   }
+
+  ActionResult actionResultSuccess = ActionResult.newBuilder().setExitCode(0).build();
+  ActionResult actionResultFail = ActionResult.newBuilder().setExitCode(1).build();
+
+
+  private RpcCallDetails makeGetActionResult(ActionResult result) {
+    GetActionResultDetails getActionResult = GetActionResultDetails.newBuilder().setResponse(result).build();
+    return RpcCallDetails.newBuilder().setGetActionResult(getActionResult).build();
+  }
+
+  private RpcCallDetails makeExecute(ActionResult result) {
+    ExecuteResponse response = ExecuteResponse.newBuilder().setResult(result).build();
+    Operation operation = Operation.newBuilder().setResponse(Any.pack(response)).setDone(true).build();
+    ExecuteDetails execute = ExecuteDetails.newBuilder().addResponses(operation).build();
+    return RpcCallDetails.newBuilder().setExecute(execute).build();
+  }
+
+  private RpcCallDetails makeWatch(ActionResult result) {
+    ExecuteResponse response = ExecuteResponse.newBuilder().setResult(result).build();
+    Operation operation = Operation.newBuilder().setResponse(Any.pack(response)).setDone(true).build();
+    WaitExecutionDetails waitExecution = WaitExecutionDetails.newBuilder().addResponses(operation).build();
+    return RpcCallDetails.newBuilder().setWaitExecution(waitExecution).build();
+  }
+
+  // Test logic to extract action result
+  @Test
+  public void ActionResultForEmpty() {
+    ActionDetails details = new ActionDetails("actionId");
+    // Action with no log entries is not failed but has no actionResult
+    assert(details.summary.getActionResult() == null);
+    assert(!details.isFailed());
+  };
+
+  @Test
+  public void ActionResultFromCachePass() throws IOException {
+    ActionDetails details = new ActionDetails("actionId");
+    // Action with no log entries is not failed but has no actionResult
+    details.add(getLogEntry("actionId", "Execute", 10, makeGetActionResult(actionResultSuccess)));
+    assert(details.summary.getActionResult() != null);
+    assert(!details.isFailed());
+  };
+
+  @Test
+  public void ActionResultFromCacheFail() throws IOException {
+    ActionDetails details = new ActionDetails("actionId");
+    // Action with no log entries is not failed but has no actionResult
+    details.add(getLogEntry("actionId", "Execute", 10, makeGetActionResult(actionResultFail)));
+    assert(details.summary.getActionResult() != null);
+    assert(details.isFailed());
+  };
+
+
+  @Test
+  public void ActionResultFromExecutePass() throws IOException {
+    ActionDetails details = new ActionDetails("actionId");
+    // Action with no log entries is not failed but has no actionResult
+    details.add(getLogEntry("actionId", "Execute", 10, makeExecute(actionResultSuccess)));
+    assert(details.summary.getActionResult() != null);
+    assert(!details.isFailed());
+  };
+
+  @Test
+  public void ActionResultFromExecuteFail() throws IOException {
+    ActionDetails details = new ActionDetails("actionId");
+    // Action with no log entries is not failed but has no actionResult
+    details.add(getLogEntry("actionId", "Execute", 10, makeExecute(actionResultFail)));
+    assert(details.summary.getActionResult() != null);
+    assert(details.isFailed());
+  };
+
+  @Test
+  public void ActionResultFromWatchPass() throws IOException {
+    ActionDetails details = new ActionDetails("actionId");
+    // Action with no log entries is not failed but has no actionResult
+    details.add(getLogEntry("actionId", "Execute", 10, makeWatch(actionResultSuccess)));
+    assert(details.summary.getActionResult() != null);
+    assert(!details.isFailed());
+  };
+
+  @Test
+  public void ActionResultFromWatchFail() throws IOException {
+    ActionDetails details = new ActionDetails("actionId");
+    // Action with no log entries is not failed but has no actionResult
+    details.add(getLogEntry("actionId", "Execute", 10, makeWatch(actionResultFail)));
+    assert(details.summary.getActionResult() != null);
+    assert(details.isFailed());
+  };
 }
