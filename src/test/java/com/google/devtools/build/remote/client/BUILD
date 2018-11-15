@@ -41,6 +41,7 @@ java_test(
         "//src/main/proto:remote_execution_log_java_proto",
         "@com_google_protobuf_protobuf_java//jar",
         "@googleapis//:google_longrunning_operations_java_proto",
+        "@io_grpc_grpc_core//jar",
         "@remoteapis//build/bazel/remote/execution/v2:remote_execution_java_proto",
     ],
 )

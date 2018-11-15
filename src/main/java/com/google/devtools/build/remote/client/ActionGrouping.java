@@ -18,8 +18,11 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedMap;
+import java.util.TreeMap;
 
 /** A class to handle GRPc log grouped by actions */
 final class ActionGrouping {
@@ -33,10 +36,9 @@ final class ActionGrouping {
   @VisibleForTesting static final String actionString = "Entries for action with hash '%s'\n";
 
   // A summary of ActionResult for a single action:
-  // This finds and records and ActionResult, regardless of how it was obtained.
+  // This finds and records an ActionResult, regardless of how it was obtained.
   static class ActionResultSummary {
     String actionId;
-
     ActionResult actionResult;
 
     Timestamp latestErrorTimestamp = Timestamps.MIN_VALUE;
@@ -156,7 +158,7 @@ final class ActionGrouping {
   };
 
   // Key: actionId; Value: a set of associated log entries.
-  private Map<String, ActionDetails> actionMap = new HashMap<>();
+  private Map<String, ActionDetails> actionMap = new LinkedHashMap<>();
 
   // True if found V1 entries in the log.
   private boolean V1found = false;
